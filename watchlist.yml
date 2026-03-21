@@ -1,0 +1,18 @@
+settings:
+  email: "your-email@example.com"
+  default_max_price: 100
+  alert_cooldown_hours: 6
+  geo_filter:
+    dma_id: "324" # Los Angeles DMA
+
+artists: []
+  # - name: "Radiohead"
+  #   max_price: 150
+
+events: []
+  # - name: "Phish @ MSG"
+  #   ticketmaster_event_id: "vvG1zZ4pQ5kYKB"
+  #   max_price: 120
+  # - name: "Kendrick Lamar Tour"
+  #   ticketmaster_keyword: "Kendrick Lamar Grand National"
+  #   max_price: 200
