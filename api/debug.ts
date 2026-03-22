@@ -1,36 +1,17 @@
 export async function GET() {
-  const errors: string[] = [];
+  const checks: string[] = [];
 
+  // Test SeatGeek API directly
+  const sgId = process.env.SEATGEEK_CLIENT_ID;
+  checks.push(`sg_id_length: ${sgId?.length ?? 'undefined'}`);
   try {
-    const { loadWatchlist } = await import("../src/config/loader");
-    const config = loadWatchlist();
-    errors.push(`config: ${config.artists.length} artists`);
+    const url = `https://api.seatgeek.com/2/performers?q=Tame+Impala&per_page=1&client_id=${sgId}`;
+    const res = await fetch(url);
+    const text = await res.text();
+    checks.push(`seatgeek: ${res.status} ${text.slice(0, 200)}`);
   } catch (e) {
-    errors.push(`config: ${e}`);
+    checks.push(`seatgeek: ${e}`);
   }
 
-  try {
-    const { createRedis } = await import("../src/state/redis");
-    const redis = createRedis();
-    errors.push(`redis: ok`);
-  } catch (e) {
-    errors.push(`redis: ${e}`);
-  }
-
-  try {
-    const { createResendSender } = await import("../src/alerts/resend-sender");
-    createResendSender();
-    errors.push(`resend: ok`);
-  } catch (e) {
-    errors.push(`resend: ${e}`);
-  }
-
-  try {
-    const { monitor } = await import("../src/monitor");
-    errors.push(`monitor: imported ok`);
-  } catch (e) {
-    errors.push(`monitor: ${e}`);
-  }
-
-  return Response.json({ checks: errors });
+  return Response.json({ checks });
 }
