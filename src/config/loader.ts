@@ -9,8 +9,12 @@ export function loadWatchlist(): WatchlistConfig {
 
   // Geo from env vars (keeps coordinates out of source code)
   if (process.env.GEO_LAT && process.env.GEO_LON) {
-    geo.lat = parseFloat(process.env.GEO_LAT);
-    geo.lon = parseFloat(process.env.GEO_LON);
+    const lat = parseFloat(process.env.GEO_LAT);
+    const lon = parseFloat(process.env.GEO_LON);
+    if (Number.isFinite(lat) && Number.isFinite(lon)) {
+      geo.lat = lat;
+      geo.lon = lon;
+    }
   }
   if (process.env.GEO_RANGE) {
     geo.range = process.env.GEO_RANGE;
