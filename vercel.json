@@ -1,10 +1,5 @@
 {
   "installCommand": "bun install",
-  "functions": {
-    "api/cron.ts": {
-      "maxDuration": 60
-    }
-  },
   "crons": [
     {
       "path": "/api/cron",
