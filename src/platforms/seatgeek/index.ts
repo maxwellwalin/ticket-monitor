@@ -124,7 +124,8 @@ export class SeatGeekClient implements PlatformAdapter {
       throw new Error("SeatGeek rate limit exceeded");
     }
     if (!res.ok) {
-      throw new Error(`SeatGeek API error: ${res.status} ${res.statusText}`);
+      const body = await res.text().catch(() => "");
+      throw new Error(`SeatGeek API error: ${res.status} ${res.statusText} - ${body.slice(0, 200)}`);
     }
     return res;
   }
