@@ -4,6 +4,9 @@ const geoFilterSchema = z.object({
   dma_id: z.string().optional(),
   state_code: z.string().optional(),
   country_code: z.string().default("US"),
+  lat: z.number().optional(),
+  lon: z.number().optional(),
+  range: z.string().optional(), // e.g. "60mi"
 });
 
 const artistWatchSchema = z.object({
@@ -16,11 +19,12 @@ const eventWatchSchema = z
     name: z.string(),
     ticketmaster_event_id: z.string().optional(),
     ticketmaster_keyword: z.string().optional(),
+    keyword: z.string().optional(),
     max_price: z.number().positive().optional(),
   })
-  .refine((e) => e.ticketmaster_event_id || e.ticketmaster_keyword, {
+  .refine((e) => e.ticketmaster_event_id || e.ticketmaster_keyword || e.keyword, {
     message:
-      "Event watch must have either ticketmaster_event_id or ticketmaster_keyword",
+      "Event watch must have ticketmaster_event_id, ticketmaster_keyword, or keyword",
   });
 
 const settingsSchema = z.object({

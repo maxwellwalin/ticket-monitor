@@ -2,13 +2,13 @@
   "installCommand": "bun install",
   "functions": {
     "api/cron.ts": {
-      "includeFiles": "watchlist.yml"
+      "includeFiles": ["watchlist.yml"]
     }
   },
   "crons": [
     {
       "path": "/api/cron",
-      "schedule": "*/5 * * * *"
+      "schedule": "*/30 * * * *"
     }
   ]
 }

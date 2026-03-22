@@ -1,15 +1,20 @@
 import type { NormalizedEvent } from "../types";
-import type { GeoFilter } from "../config/schema";
+import type { ResolvedGeo } from "../config/geo";
+
+export interface PlatformResult<T> {
+  data: T;
+  apiCalls: number;
+}
 
 export interface PlatformAdapter {
   name: string;
   searchEventsByArtist(
     artistName: string,
-    geo?: GeoFilter
-  ): Promise<NormalizedEvent[]>;
+    geo: ResolvedGeo
+  ): Promise<PlatformResult<NormalizedEvent[]>>;
   searchEventsByKeyword(
     keyword: string,
-    geo?: GeoFilter
-  ): Promise<NormalizedEvent[]>;
-  getEventById(eventId: string): Promise<NormalizedEvent | null>;
+    geo: ResolvedGeo
+  ): Promise<PlatformResult<NormalizedEvent[]>>;
+  getEventById(eventId: string): Promise<PlatformResult<NormalizedEvent | null>>;
 }

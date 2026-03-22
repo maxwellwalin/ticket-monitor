@@ -3,23 +3,37 @@
  * Usage: bun run scripts/test-local.ts
  *
  * Requires TICKETMASTER_API_KEY in .env
- * Skips email sending and Redis — just tests the TM API integration.
+ * Optional: SEATGEEK_CLIENT_ID for SeatGeek integration
  */
 
 import { loadWatchlist } from "../src/config/loader";
-import { TicketmasterAdapter } from "../src/platforms/index";
-import type { IAttractionCache } from "../src/platforms/ticketmaster/cache";
+import { TicketmasterClient } from "../src/platforms/index";
+import { SeatGeekClient } from "../src/platforms/seatgeek/index";
+import { createPriceStore } from "../src/prices";
+import { createRedis } from "../src/state/redis";
+import { discoverEvents } from "../src/discovery";
+import { createRateLimiter } from "../src/platforms/rate-limiter";
+import type { PlatformAdapter } from "../src/platforms/types";
 import type { NormalizedEvent } from "../src/types";
+import { MemoryAttractionCache } from "./utils";
 
-/** In-memory stub so we can run without Redis */
-class MemoryAttractionCache implements IAttractionCache {
-  private map = new Map<string, string>();
-  async get(name: string) {
-    return this.map.get(name) ?? null;
+function printEvent(event: NormalizedEvent, maxPrice: number) {
+  const belowThreshold =
+    event.priceRange && event.priceRange.min <= maxPrice;
+  const marker = belowThreshold ? " *** MATCH ***" : "";
+  console.log(
+    `  - ${event.name} | ${event.date} | ${event.venueName}, ${event.venueCity}`
+  );
+  console.log(
+    `    Status: ${event.status} | Price: ${event.priceRange ? `$${event.priceRange.min}-$${event.priceRange.max} (${event.priceRange.source || "api"})` : "N/A"} | Max: $${maxPrice}${marker}`
+  );
+  if (event.platformPrices && event.platformPrices.length > 0) {
+    const pp = event.platformPrices
+      .map((p) => `${p.platform}: $${p.min}`)
+      .join(" · ");
+    console.log(`    Cross-platform: ${pp}`);
   }
-  async set(name: string, id: string) {
-    this.map.set(name, id);
-  }
+  console.log(`    URL: ${event.url}`);
 }
 
 async function main() {
@@ -32,70 +46,49 @@ async function main() {
   console.log(`Default max price: $${config.settings.default_max_price}`);
   console.log("---");
 
-  const platforms = [new TicketmasterAdapter(new MemoryAttractionCache())];
+  const redis = createRedis();
+  const priceStore = createPriceStore(redis);
 
-  for (const platform of platforms) {
-    console.log(`\nPlatform: ${platform.name}`);
+  const tmRateLimiter = createRateLimiter(500);
+  const sgRateLimiter = createRateLimiter(200);
 
-    for (const artist of config.artists) {
-      console.log(`\nSearching for artist: ${artist.name}`);
-      const events = await platform.searchEventsByArtist(
-        artist.name,
-        config.settings.geo_filter
-      );
-      const maxPrice = artist.max_price ?? config.settings.default_max_price;
-      console.log(`  Found ${events.length} events`);
+  const platforms: PlatformAdapter[] = [
+    new TicketmasterClient({
+      cache: new MemoryAttractionCache(),
+      rateLimiter: tmRateLimiter,
+    }),
+  ];
 
-      for (const event of events) {
-        const belowThreshold =
-          event.priceRange && event.priceRange.min <= maxPrice;
-        const marker = belowThreshold ? " *** MATCH ***" : "";
-        console.log(
-          `  - ${event.name} | ${event.date} | ${event.venueName}, ${event.venueCity}`
-        );
-        console.log(
-          `    Status: ${event.status} | Price: ${event.priceRange ? `$${event.priceRange.min}-$${event.priceRange.max}` : "N/A"} | Max: $${maxPrice}${marker}`
-        );
-        console.log(`    URL: ${event.url}`);
-      }
-    }
+  if (process.env.SEATGEEK_CLIENT_ID) {
+    platforms.push(new SeatGeekClient({
+      rateLimiter: sgRateLimiter,
+      performerCache: new MemoryAttractionCache(),
+    }));
+    console.log("SeatGeek: enabled");
+  } else {
+    console.log("SeatGeek: disabled (no SEATGEEK_CLIENT_ID)");
+  }
 
-    for (const eventWatch of config.events) {
-      console.log(`\nSearching for event: ${eventWatch.name}`);
-      let events: NormalizedEvent[] = [];
-      if (eventWatch.ticketmaster_event_id) {
-        const event = await platform.getEventById(
-          eventWatch.ticketmaster_event_id
-        );
-        events = event ? [event] : [];
-      } else if (eventWatch.ticketmaster_keyword) {
-        events = await platform.searchEventsByKeyword(
-          eventWatch.ticketmaster_keyword
-        );
-      } else {
-        events = [];
-      }
+  // Use shared discovery module
+  const discovery = await discoverEvents({ platforms, config });
 
-      const maxPrice =
-        eventWatch.max_price ?? config.settings.default_max_price;
-      console.log(`  Found ${events.length} events`);
-
-      for (const event of events) {
-        const belowThreshold =
-          event.priceRange && event.priceRange.min <= maxPrice;
-        const marker = belowThreshold ? " *** MATCH ***" : "";
-        console.log(
-          `  - ${event.name} | ${event.date} | ${event.venueName}, ${event.venueCity}`
-        );
-        console.log(
-          `    Status: ${event.status} | Price: ${event.priceRange ? `$${event.priceRange.min}-$${event.priceRange.max}` : "N/A"} | Max: $${maxPrice}${marker}`
-        );
-        console.log(`    URL: ${event.url}`);
-      }
+  if (discovery.errors.length > 0) {
+    for (const err of discovery.errors) {
+      console.error(`  Error: ${err}`);
     }
   }
 
-  console.log("\n--- Done ---");
+  // Print per-watch results with enrichment
+  for (const hit of discovery.watchHits) {
+    console.log(`\nWatch: ${hit.watchName}`);
+    const events = await priceStore.enrichAll(hit.events);
+    console.log(`  Found ${events.length} events`);
+    for (const event of events) {
+      printEvent(event, hit.maxPrice);
+    }
+  }
+
+  console.log(`\n--- Done (${discovery.apiCallsUsed} total API calls) ---`);
 }
 
 main().catch(console.error);

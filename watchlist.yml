@@ -1,18 +1,32 @@
 settings:
-  email: "your-email@example.com"
+  email: "you@example.com"  # Override with ALERT_EMAIL env var
   default_max_price: 100
   alert_cooldown_hours: 6
   geo_filter:
-    dma_id: "324" # Los Angeles DMA
+    lat: 33.6633    # 92626 (Costa Mesa, CA)
+    lon: -117.9033
+    range: "120mi"
 
-artists: []
-  # - name: "Radiohead"
-  #   max_price: 150
+artists:
+  - name: "Angine de Poitrine"
+    max_price: 150
+  - name: "KNOWER"
+    max_price: 100
+  - name: "Tame Impala"
+    max_price: 200
+  - name: "TOOL"
+    max_price: 200
+  - name: "Geese"
+    max_price: 150
+  - name: "Prostitute"
+    max_price: 80
+  - name: "Maruja"
+    max_price: 80
+  - name: "Psychedelic Porn Crumpets"
+    max_price: 80
+  - name: "King Gizzard & The Lizard Wizard"
+    max_price: 150
+  - name: "Queens of the Stone Age"
+    max_price: 200
 
 events: []
-  # - name: "Phish @ MSG"
-  #   ticketmaster_event_id: "vvG1zZ4pQ5kYKB"
-  #   max_price: 120
-  # - name: "Kendrick Lamar Tour"
-  #   ticketmaster_keyword: "Kendrick Lamar Grand National"
-  #   max_price: 200

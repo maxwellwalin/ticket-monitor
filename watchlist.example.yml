@@ -1,0 +1,16 @@
+settings:
+  email: "you@example.com"
+  default_max_price: 100
+  alert_cooldown_hours: 6
+  geo_filter:
+    lat: 34.0522      # Los Angeles
+    lon: -118.2437
+    range: "60mi"
+
+artists:
+  - name: "Tame Impala"
+    max_price: 200
+  - name: "Radiohead"
+    max_price: 150
+
+events: []

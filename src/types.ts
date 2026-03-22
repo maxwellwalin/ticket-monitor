@@ -1,3 +1,18 @@
+export type PlatformName =
+  | "ticketmaster"
+  | "seatgeek"
+  | "stubhub"
+  | "vividseats";
+
+export interface PlatformPrice {
+  platform: PlatformName;
+  min: number;
+  max: number;
+  currency: string;
+  url: string;
+  source: "discovery-api" | "seatgeek" | "scraped";
+}
+
 export interface Presale {
   name: string;
   startDateTime: string; // ISO 8601
@@ -7,7 +22,7 @@ export interface Presale {
 
 export interface NormalizedEvent {
   platformEventId: string;
-  platform: string;
+  platform: PlatformName;
   name: string;
   artistName: string;
   venueName: string;
@@ -25,12 +40,18 @@ export interface NormalizedEvent {
     min: number;
     max: number;
     currency: string;
+    source?: "discovery-api" | "seatgeek" | "scraped";
   };
   publicSaleStart?: string; // ISO 8601
   presales?: Presale[];
+  platformPrices?: PlatformPrice[];
 }
 
-export type AlertType = "price_below" | "presale_opening" | "price_drop";
+export type AlertType =
+  | "price_below"
+  | "presale_opening"
+  | "price_drop"
+  | "tickets_available";
 
 export interface AlertPayload {
   type: AlertType;
@@ -38,5 +59,5 @@ export interface AlertPayload {
   watchName: string;
   maxPrice: number;
   detail?: string; // e.g. "Citi Presale — opens in 2h" or "Price dropped $150 → $89"
-  presaleName?: string; // raw presale name for dedup key (presale_opening alerts only)
+  dedupKey: string; // full Redis key for mark-before-send
 }

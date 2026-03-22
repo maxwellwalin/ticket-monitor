@@ -3,6 +3,7 @@ import { Redis } from "@upstash/redis";
 /** Subset of @upstash/redis used by this app */
 export interface RedisClient {
   get<T = unknown>(key: string): Promise<T | null>;
+  mget<T = unknown>(...keys: string[]): Promise<(T | null)[]>;
   set(
     key: string,
     value: unknown,
@@ -14,8 +15,10 @@ export interface RedisClient {
 }
 
 export function createRedis(): RedisClient {
-  return new Redis({
+  const redis = new Redis({
     url: process.env.UPSTASH_REDIS_REST_URL!,
     token: process.env.UPSTASH_REDIS_REST_TOKEN!,
-  }) as RedisClient;
+  });
+  // Redis class implements all RedisClient methods; structural subtyping handles the rest
+  return redis as unknown as RedisClient;
 }
