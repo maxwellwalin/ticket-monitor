@@ -25,18 +25,18 @@ export async function GET(request: Request): Promise<Response> {
     const redis = createRedis();
     const alertState = new RedisAlertState(redis);
     const apiBudget = new ApiBudgetStore(redis);
-    const cache = new AttractionCache(redis);
+    const tmCache = new AttractionCache(redis, "tm");
     const priceStore = createPriceStore(redis);
 
     const tmRateLimiter = createRateLimiter(500);
     const sgRateLimiter = createRateLimiter(200);
 
     const platforms: PlatformAdapter[] = [
-      new TicketmasterClient({ cache, rateLimiter: tmRateLimiter }),
+      new TicketmasterClient({ cache: tmCache, rateLimiter: tmRateLimiter }),
     ];
     if (process.env.SEATGEEK_CLIENT_ID) {
-      const performerCache = new AttractionCache(redis);
-      platforms.push(new SeatGeekClient({ rateLimiter: sgRateLimiter, performerCache }));
+      const sgCache = new AttractionCache(redis, "sg");
+      platforms.push(new SeatGeekClient({ rateLimiter: sgRateLimiter, performerCache: sgCache }));
     }
     const sender = createResendSender();
 

@@ -1,9 +1,7 @@
 import type { RedisClient } from "../../state/redis";
 
-const ATTRACTION_PREFIX = "attraction";
-
-function attractionKey(name: string): string {
-  return `${ATTRACTION_PREFIX}:${name.toLowerCase().replace(/\s+/g, "-")}`;
+function cacheKey(prefix: string, name: string): string {
+  return `${prefix}:${name.toLowerCase().replace(/\s+/g, "-")}`;
 }
 
 export interface IAttractionCache {
@@ -12,13 +10,17 @@ export interface IAttractionCache {
 }
 
 export class AttractionCache implements IAttractionCache {
-  constructor(private redis: RedisClient) {}
+  private prefix: string;
+
+  constructor(private redis: RedisClient, platform: string = "tm") {
+    this.prefix = `attraction:${platform}`;
+  }
 
   async get(name: string): Promise<string | null> {
-    return this.redis.get<string>(attractionKey(name));
+    return this.redis.get<string>(cacheKey(this.prefix, name));
   }
 
   async set(name: string, id: string, ttlSec: number = 86400): Promise<void> {
-    await this.redis.set(attractionKey(name), id, { ex: ttlSec });
+    await this.redis.set(cacheKey(this.prefix, name), id, { ex: ttlSec });
   }
 }
