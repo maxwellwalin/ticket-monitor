@@ -140,7 +140,7 @@ export function createPriceStore(redis: RedisClient): PriceStore {
             const platform = KNOWN_PLATFORMS[pIdx];
             const price = values[eventIdx * platformCount + pIdx];
             if (!price) continue;
-            if (platform === event.platform) continue;
+            if (platform === event.platform && event.priceRange) continue;
 
             const url =
               price.url ?? SEARCH_URLS[platform](event.name, event.url);
