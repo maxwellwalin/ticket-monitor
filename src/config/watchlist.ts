@@ -7,9 +7,6 @@ const watchlist: WatchlistConfig = {
     alert_cooldown_hours: 6,
     geo_filter: {
       country_code: "US",
-      lat: 33.6633,  // Costa Mesa, CA area
-      lon: -117.9033,
-      range: "120mi",
     },
   },
   artists: [
