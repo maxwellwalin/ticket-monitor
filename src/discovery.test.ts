@@ -136,10 +136,10 @@ describe("deduplicateEvents", () => {
     expect(result[0].priceRange!.min).toBe(80);
   });
 
-  test("case-insensitive artist and venue matching", () => {
+  test("case-insensitive artist and city matching", () => {
     const events = [
-      makeEvent({ platformEventId: "ev1", artistName: "TOOL", venueName: "THE FORUM" }),
-      makeEvent({ platformEventId: "ev2", artistName: "Tool", venueName: "The Forum" }),
+      makeEvent({ platformEventId: "ev1", artistName: "TOOL", venueCity: "LOS ANGELES" }),
+      makeEvent({ platformEventId: "ev2", artistName: "Tool", venueCity: "Los Angeles" }),
     ];
     expect(deduplicateEvents(events)).toHaveLength(1);
   });
@@ -152,12 +152,30 @@ describe("deduplicateEvents", () => {
     expect(deduplicateEvents(events)).toHaveLength(2);
   });
 
-  test("different venues are not duplicates", () => {
+  test("different cities are not duplicates", () => {
     const events = [
-      makeEvent({ platformEventId: "ev1", venueName: "Venue A" }),
-      makeEvent({ platformEventId: "ev2", venueName: "Venue B" }),
+      makeEvent({ platformEventId: "ev1", venueCity: "Los Angeles" }),
+      makeEvent({ platformEventId: "ev2", venueCity: "San Diego" }),
     ];
     expect(deduplicateEvents(events)).toHaveLength(2);
+  });
+
+  test("same city different venues are deduplicated", () => {
+    const events = [
+      makeEvent({ platformEventId: "ev1", venueName: "Agua Caliente Casino", venueCity: "Rancho Mirage" }),
+      makeEvent({ platformEventId: "ev2", venueName: "Agua Caliente Casino - Rancho Mirage", venueCity: "Rancho Mirage" }),
+    ];
+    expect(deduplicateEvents(events)).toHaveLength(1);
+  });
+
+  test("prefers onsale over offsale when deduplicating", () => {
+    const events = [
+      makeEvent({ platformEventId: "ev1", status: "offsale" }),
+      makeEvent({ platformEventId: "ev2", status: "onsale" }),
+    ];
+    const result = deduplicateEvents(events);
+    expect(result).toHaveLength(1);
+    expect(result[0].status).toBe("onsale");
   });
 
   test("different artists are not duplicates", () => {

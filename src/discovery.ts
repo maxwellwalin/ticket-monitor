@@ -200,17 +200,22 @@ export async function discoverForScraper(deps: {
 // Utility
 // ---------------------------------------------------------------------------
 
-/** Deduplicate events across platforms by artist+venue+date. Keeps first occurrence; prefers API-priced. */
+/** Deduplicate events across platforms by artist+city+date. Keeps first occurrence; prefers onsale + API-priced. */
 export function deduplicateEvents(
   events: NormalizedEvent[]
 ): NormalizedEvent[] {
   const seen = new Map<string, NormalizedEvent>();
   for (const event of events) {
     const dateKey = event.date.slice(0, 10); // YYYY-MM-DD
-    const key = `${event.artistName.toLowerCase()}:${event.venueName.toLowerCase()}:${dateKey}`;
+    const key = `${event.artistName.toLowerCase()}:${event.venueCity.toLowerCase()}:${dateKey}`;
     const existing = seen.get(key);
     if (!existing) {
       seen.set(key, event);
+    } else if (existing.status !== "onsale" && event.status === "onsale") {
+      // Prefer onsale, but only if we don't lose pricing
+      if (event.priceRange || !existing.priceRange) {
+        seen.set(key, event);
+      }
     } else if (!existing.priceRange && event.priceRange) {
       // Prefer the one with pricing
       seen.set(key, event);

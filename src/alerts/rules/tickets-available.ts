@@ -12,6 +12,10 @@ export const ticketsAvailableRule: AlertRule = {
   dedupNamespace: "alert",
   suppresses: ["price_below", "price_drop"],
 
+  dedupDiscriminator(event, _match, ctx) {
+    return `${ctx.maxPrice}:${event.priceRange?.min ?? 0}`;
+  },
+
   async evaluate(
     event: NormalizedEvent,
     ctx: AlertCheckContext,
@@ -38,9 +42,11 @@ export const ticketsAvailableRule: AlertRule = {
       pp.length > 0
         ? `Best: $${pp[0].min} on ${platformLabel(pp[0].platform)}`
         : detail || "Tickets available";
+    const isResale = event.status !== "onsale";
+    const label = isResale ? "Resale available:" : "Tickets found:";
     return `
         <div style="margin-bottom: 8px;">
-          <span style="color: #0891b2; font-weight: bold;">Tickets found: ${ticketText}</span>
+          <span style="color: #0891b2; font-weight: bold;">${label} ${ticketText}</span>
           <span style="color: #888; font-size: 13px;"> (your max: $${alert.maxPrice})</span>
         </div>`;
   },

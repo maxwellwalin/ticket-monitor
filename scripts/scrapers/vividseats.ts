@@ -72,13 +72,14 @@ export async function scrapeVividSeats(
         const urlDatePattern = `${parseInt(month)}-${parseInt(day)}-${year}`;
         let targetUrl = eventLinks.find((l) => l.href.includes(urlDatePattern))?.href;
 
-        // Fallback: first link
-        if (!targetUrl && eventLinks.length > 0) {
-          targetUrl = eventLinks[0].href;
+        // Fallback: match by city slug in URL
+        if (!targetUrl) {
+          const citySlug = event.venueCity.toLowerCase().replace(/\s+/g, "-");
+          targetUrl = eventLinks.find((l) => l.href.includes(citySlug))?.href;
         }
 
         if (!targetUrl) {
-          console.log(`    No event link found`);
+          console.log(`    No matching event link (date/city) — skipping`);
           failed++;
           continue;
         }

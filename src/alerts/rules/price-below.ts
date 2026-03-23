@@ -12,6 +12,10 @@ export const priceBelowRule: AlertRule = {
   dedupNamespace: "alert",
   suppresses: ["price_drop"],
 
+  dedupDiscriminator(event, _match, ctx) {
+    return `${ctx.maxPrice}:${event.priceRange?.min ?? 0}`;
+  },
+
   async evaluate(
     event: NormalizedEvent,
     ctx: AlertCheckContext,

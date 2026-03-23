@@ -331,7 +331,7 @@ describe("AlertEngine", () => {
     });
     const alerts = await engine.detect([event], ctx);
     expect(alerts).toHaveLength(1);
-    expect(alerts[0].dedupKey).toBe("alert:ev1:100");
+    expect(alerts[0].dedupKey).toBe("alert:ev1:100:80");
   });
 
   test("centralized dedup key: presale_opening uses presale namespace + slug", async () => {

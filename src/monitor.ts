@@ -5,7 +5,7 @@ import { AlertEngine } from "./alerts/engine";
 import { defaultRules } from "./alerts/rules";
 import { systemClock } from "./alerts/ports";
 import type { PriceStore } from "./prices";
-import { discoverForMonitor } from "./discovery";
+import { discoverForMonitor, deduplicateEvents } from "./discovery";
 import { loadWatchlist } from "./config/loader";
 import type { PlatformAdapter } from "./platforms/types";
 
@@ -41,7 +41,8 @@ export function createMonitor(deps: MonitorDeps): TicketMonitor {
         errors: [],
       };
 
-      const cooldownSec = config.settings.alert_cooldown_hours * 3600;
+      // Long TTL — re-alerting is driven by price changes (encoded in dedup key), not cooldown expiry
+      const cooldownSec = 90 * 86400;
 
       // Discover events from all platforms/watches
       // Budget read+write is handled internally by discoverForMonitor
@@ -60,9 +61,26 @@ export function createMonitor(deps: MonitorDeps): TicketMonitor {
       }
 
       try {
-        // Collect all unique events across watch hits for a single enrichment call
-        const allWatchEvents = new Map<string, NormalizedEvent>();
+        // Merge watchHits by watchName to deduplicate cross-platform events
+        const mergedHits = new Map<string, { watchName: string; maxPrice: number; events: NormalizedEvent[] }>();
         for (const hit of discovery.watchHits) {
+          const existing = mergedHits.get(hit.watchName);
+          if (existing) {
+            existing.events.push(...hit.events);
+            existing.maxPrice = Math.max(existing.maxPrice, hit.maxPrice);
+          } else {
+            mergedHits.set(hit.watchName, { ...hit, events: [...hit.events] });
+          }
+        }
+        // Deduplicate events within each merged watch group
+        const dedupedHits = Array.from(mergedHits.values()).map((hit) => ({
+          ...hit,
+          events: deduplicateEvents(hit.events),
+        }));
+
+        // Collect all unique events for a single enrichment call
+        const allWatchEvents = new Map<string, NormalizedEvent>();
+        for (const hit of dedupedHits) {
           for (const e of hit.events) allWatchEvents.set(e.platformEventId, e);
         }
         const enrichedAll = deps.priceStore
@@ -71,9 +89,9 @@ export function createMonitor(deps: MonitorDeps): TicketMonitor {
         const enrichedMap = new Map<string, NormalizedEvent>();
         for (const e of enrichedAll) enrichedMap.set(e.platformEventId, e);
 
-        // Process each watch hit through AlertEngine
+        // Process each deduplicated watch hit through AlertEngine
         const alerts: AlertPayload[] = [];
-        for (const hit of discovery.watchHits) {
+        for (const hit of dedupedHits) {
           const events = hit.events.map(
             (e) => enrichedMap.get(e.platformEventId) ?? e
           );

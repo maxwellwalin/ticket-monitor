@@ -47,7 +47,7 @@ function alertRow(alert: AlertPayload): string {
         </div>
         ${detailLine(alert)}
         <div style="font-size: 13px; color: #888; margin-bottom: 8px;">
-          Watching: ${watchName} &middot; Status: ${event.status}
+          Watching: ${watchName}
         </div>
         <a href="${buyUrl}" style="display: inline-block; padding: 10px 24px; background: #2563eb; color: white; text-decoration: none; border-radius: 6px; font-weight: bold;">
           Buy Tickets
