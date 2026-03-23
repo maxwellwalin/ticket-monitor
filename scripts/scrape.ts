@@ -1,18 +1,14 @@
 /**
- * Full pipeline: discover → scrape → alert.
+ * Scrape prices for all discovered events.
  *
- * Runs via launchd every ~1 hour. Equivalent to running `scrape` then `monitor`
- * in a single process with shared state.
+ * Discovers events from TM + SeatGeek APIs, then scrapes prices from
+ * Ticketmaster, StubHub, and Vivid Seats. Writes prices to Redis.
  *
- * Usage: bun run start
+ * Usage: bun run scrape
  */
 
 import { createPriceStore } from "../src/prices";
 import { createRedis } from "../src/state/redis";
-import { createMonitor } from "../src/monitor";
-import { ApiBudgetStore } from "../src/state/api-budget";
-import { RedisAlertState } from "../src/alerts/adapters/redis-state";
-import { createResendSender } from "../src/alerts/resend-sender";
 import { discoverForScraper } from "../src/discovery";
 import { scrapeTicketmaster } from "./scrapers/ticketmaster";
 import { scrapeStubHub } from "./scrapers/stubhub";
@@ -21,14 +17,13 @@ import { createPlatforms, MAX_EVENTS } from "./utils";
 
 async function main() {
   const start = Date.now();
-  console.log(`=== Ticket Monitor (${new Date().toLocaleString("en-US", { timeZone: "America/Los_Angeles" })}) ===\n`);
+  console.log(`=== Scrape (${new Date().toLocaleString("en-US", { timeZone: "America/Los_Angeles" })}) ===\n`);
 
   const redis = createRedis();
   const priceCache = createPriceStore(redis);
   const platforms = createPlatforms();
 
-  // --- Phase 1: Discover ---
-  console.log("[1/3] Discovering events...");
+  console.log("Discovering events...");
   const discovery = await discoverForScraper({ platforms });
   for (const err of discovery.errors) console.error(`  Error: ${err}`);
   console.log(`  ${discovery.apiCallsUsed} API calls, ${discovery.events.length} unique events`);
@@ -43,8 +38,7 @@ async function main() {
     console.log(`  Capped at ${MAX_EVENTS} (${discovery.events.length - MAX_EVENTS} skipped)`);
   }
 
-  // --- Phase 2: Scrape ---
-  console.log("\n[2/3] Scraping prices...");
+  console.log("\nScraping prices...");
   const needsTm = events.filter(
     (e) => e.platform === "ticketmaster" && !e.priceRange && e.url
   );
@@ -64,26 +58,11 @@ async function main() {
 
   await Promise.allSettled(tasks);
 
+  const elapsed = ((Date.now() - start) / 1000).toFixed(1);
+  console.log(`\n=== Done (${elapsed}s) ===`);
   console.log(`  TM: ${results.tm.scraped} scraped, ${results.tm.soldOut} sold out, ${results.tm.failed} failed`);
   console.log(`  StubHub: ${results.stubhub.scraped} scraped, ${results.stubhub.failed} failed`);
   console.log(`  Vivid: ${results.vivid.scraped} scraped, ${results.vivid.failed} failed`);
-
-  // --- Phase 3: Alert ---
-  console.log("\n[3/3] Running alert engine...");
-  const alertState = new RedisAlertState(redis);
-  const apiBudget = new ApiBudgetStore(redis);
-  const sender = createResendSender();
-
-  const mon = createMonitor({ alertState, apiBudget, platforms, sender, priceStore: priceCache });
-  const monResult = await mon.run();
-
-  console.log(`  Events checked: ${monResult.eventsChecked}`);
-  console.log(`  Alerts sent: ${monResult.alertsSent}`);
-  console.log(`  API calls: ${monResult.apiCallsUsed}`);
-  for (const err of monResult.errors) console.error(`  Error: ${err}`);
-
-  const elapsed = ((Date.now() - start) / 1000).toFixed(1);
-  console.log(`\n=== Done (${elapsed}s) ===`);
 }
 
 main().catch(console.error);

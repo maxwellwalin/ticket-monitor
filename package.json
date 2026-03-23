@@ -4,8 +4,9 @@
   "private": true,
   "scripts": {
     "start": "bun run scripts/run.ts",
+    "scrape": "bun run scripts/scrape.ts",
+    "monitor": "bun run scripts/monitor.ts",
     "test": "bun test",
-    "test:dry": "bun run scripts/test-monitor.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

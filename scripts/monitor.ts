@@ -1,25 +1,25 @@
 /**
- * Local test — runs the full monitor pipeline (discovery + dedup + alert engine)
- * with a dry-run sender that logs alerts instead of emailing.
+ * Run the alert engine against current prices in Redis.
  *
- * Usage: bun run scripts/test-monitor.ts
+ * Discovers events, enriches with cached scraped prices, runs dedup +
+ * alert rules, and sends email if any alerts fire.
+ *
+ * Usage: bun run monitor [--dry-run]
  */
 
-import { createMonitor } from "../src/monitor";
 import { createRedis } from "../src/state/redis";
+import { createPriceStore } from "../src/prices";
+import { createMonitor } from "../src/monitor";
 import { ApiBudgetStore } from "../src/state/api-budget";
 import { RedisAlertState } from "../src/alerts/adapters/redis-state";
-import { createPriceStore } from "../src/prices";
-import { TicketmasterClient } from "../src/platforms/index";
-import { SeatGeekClient } from "../src/platforms/seatgeek/index";
-import { createRateLimiter } from "../src/platforms/rate-limiter";
+import { createResendSender } from "../src/alerts/resend-sender";
 import { buildAlertEmail } from "../src/alerts/templates";
 import type { AlertSender } from "../src/alerts/ports";
 import type { AlertPayload } from "../src/types";
-import type { PlatformAdapter } from "../src/platforms/types";
-import { MemoryAttractionCache } from "./utils";
+import { createPlatforms } from "./utils";
 
-// Dry-run sender: prints alerts instead of emailing
+const dryRun = process.argv.includes("--dry-run");
+
 function createDryRunSender(): AlertSender {
   return {
     async send(_to: string, alerts: AlertPayload[]): Promise<void> {
@@ -41,41 +41,30 @@ function createDryRunSender(): AlertSender {
 }
 
 async function main() {
+  const start = Date.now();
+  console.log(`=== Monitor${dryRun ? " (dry run)" : ""} (${new Date().toLocaleString("en-US", { timeZone: "America/Los_Angeles" })}) ===\n`);
+
   const redis = createRedis();
-  const alertState = new RedisAlertState(redis);
-  const apiBudget = new ApiBudgetStore(redis);
-  const priceStore = createPriceStore(redis);
+  const platforms = createPlatforms();
+  const sender = dryRun ? createDryRunSender() : createResendSender();
 
-  const platforms: PlatformAdapter[] = [
-    new TicketmasterClient({
-      cache: new MemoryAttractionCache(),
-      rateLimiter: createRateLimiter(500),
-    }),
-  ];
+  const mon = createMonitor({
+    alertState: new RedisAlertState(redis),
+    apiBudget: new ApiBudgetStore(redis),
+    platforms,
+    sender,
+    priceStore: createPriceStore(redis),
+  });
 
-  if (process.env.SEATGEEK_CLIENT_ID) {
-    platforms.push(
-      new SeatGeekClient({
-        rateLimiter: createRateLimiter(200),
-        performerCache: new MemoryAttractionCache(),
-      })
-    );
-    console.log("SeatGeek: enabled");
-  }
-
-  const sender = createDryRunSender();
-  const mon = createMonitor({ alertState, apiBudget, platforms, sender, priceStore });
-
-  console.log("Running full monitor pipeline...\n");
   const result = await mon.run();
 
-  console.log("--- Monitor Result ---");
+  const elapsed = ((Date.now() - start) / 1000).toFixed(1);
+  console.log(`=== Done (${elapsed}s) ===`);
   console.log(`  Events checked: ${result.eventsChecked}`);
   console.log(`  Alerts sent: ${result.alertsSent}`);
   console.log(`  API calls: ${result.apiCallsUsed}`);
   if (result.errors.length > 0) {
-    console.log(`  Errors:`);
-    for (const err of result.errors) console.log(`    - ${err}`);
+    for (const err of result.errors) console.log(`  Error: ${err}`);
   }
 }
 
