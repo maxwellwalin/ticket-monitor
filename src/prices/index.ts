@@ -1,15 +1,10 @@
 import type { RedisClient } from "../state/redis";
 import type { NormalizedEvent, PlatformPrice, PlatformName } from "../types";
+import { PLATFORMS } from "../types";
 
 const PREFIX = "scraped-price:v1";
 const DEFAULT_TTL = 7200; // 2 hours
-
-export const KNOWN_PLATFORMS: PlatformName[] = [
-  "ticketmaster",
-  "seatgeek",
-  "stubhub",
-  "vividseats",
-];
+const CHUNK_SIZE = 100;
 
 interface ScrapedPrice {
   min: number;
@@ -47,14 +42,17 @@ export interface PriceStore {
   ): Promise<void>;
 
   /** Batch-enrich N events with all platform prices in minimal Redis calls. */
-  enrichAll(events: NormalizedEvent[]): Promise<NormalizedEvent[]>;
-
-  /** Check which events already have a cached price for a given platform. Returns set of eventIds that have a fresh cache entry. */
-  hasFreshPrices(eventIds: string[], platform: PlatformName): Promise<Set<string>>;
+  enrich(events: NormalizedEvent[]): Promise<NormalizedEvent[]>;
 }
 
 function key(eventId: string, platform: PlatformName): string {
   return `${PREFIX}:${platform}:${eventId}`;
+}
+
+type PriceSource = "discovery-api" | "seatgeek" | "scraped";
+
+function inferSource(event: NormalizedEvent): PriceSource {
+  return event.platform === "seatgeek" ? "seatgeek" : "discovery-api";
 }
 
 export function createPriceStore(redis: RedisClient): PriceStore {
@@ -79,35 +77,18 @@ export function createPriceStore(redis: RedisClient): PriceStore {
       await redis.set(key(eventId, platform), data, { ex: ttlSec });
     },
 
-    async hasFreshPrices(eventIds, platform) {
-      if (eventIds.length === 0) return new Set<string>();
-      const keys = eventIds.map((id) => key(id, platform));
-      const CHUNK_SIZE = 100;
-      const fresh = new Set<string>();
-      for (let i = 0; i < keys.length; i += CHUNK_SIZE) {
-        const chunk = keys.slice(i, i + CHUNK_SIZE);
-        const idChunk = eventIds.slice(i, i + CHUNK_SIZE);
-        const results = await redis.mget<ScrapedPrice>(...chunk);
-        for (let j = 0; j < results.length; j++) {
-          if (results[j]) fresh.add(idChunk[j]);
-        }
-      }
-      return fresh;
-    },
-
-    async enrichAll(events) {
+    async enrich(events) {
       if (events.length === 0) return events;
 
       // Build all keys: N events x P platforms
       const keys: string[] = [];
       for (const event of events) {
-        for (const platform of KNOWN_PLATFORMS) {
+        for (const platform of PLATFORMS) {
           keys.push(key(event.platformEventId, platform));
         }
       }
 
-      // Batch mget in chunks of 100 to stay within Upstash request limits
-      const CHUNK_SIZE = 100;
+      // Batch mget in chunks to stay within Upstash request limits
       const values: (ScrapedPrice | null)[] = [];
       for (let i = 0; i < keys.length; i += CHUNK_SIZE) {
         const chunk = keys.slice(i, i + CHUNK_SIZE);
@@ -115,8 +96,8 @@ export function createPriceStore(redis: RedisClient): PriceStore {
         values.push(...results);
       }
 
-      // Map results back: every KNOWN_PLATFORMS.length entries = 1 event
-      const platformCount = KNOWN_PLATFORMS.length;
+      // Map results back: every PLATFORMS.length entries = 1 event
+      const platformCount = PLATFORMS.length;
 
       return events.map((event, eventIdx) => {
         try {
@@ -124,20 +105,19 @@ export function createPriceStore(redis: RedisClient): PriceStore {
 
           // Include event's own priceRange first
           if (event.priceRange) {
-            const defaultSource = event.platform === "seatgeek" ? "seatgeek" as const : "discovery-api" as const;
             platformPrices.push({
               platform: event.platform,
               min: event.priceRange.min,
               max: event.priceRange.max,
               currency: event.priceRange.currency,
               url: event.url,
-              source: event.priceRange.source ?? defaultSource,
+              source: event.priceRange.source ?? inferSource(event),
             });
           }
 
           // Add scraped prices from other platforms
           for (let pIdx = 0; pIdx < platformCount; pIdx++) {
-            const platform = KNOWN_PLATFORMS[pIdx];
+            const platform = PLATFORMS[pIdx];
             const price = values[eventIdx * platformCount + pIdx];
             if (!price) continue;
             if (platform === event.platform && event.priceRange) continue;
@@ -172,8 +152,7 @@ export function createPriceStore(redis: RedisClient): PriceStore {
           return {
             ...event,
             priceRange,
-            platformPrices:
-              platformPrices.length > 0 ? platformPrices : undefined,
+            platformPrices,
           };
         } catch (err) {
           console.warn(`Price enrichment failed for ${event.platformEventId}: ${err}`);
@@ -182,4 +161,26 @@ export function createPriceStore(redis: RedisClient): PriceStore {
       });
     },
   };
+}
+
+/** Returns events that DON'T have fresh cache entries for the given platform. */
+export async function filterStale(
+  redis: RedisClient,
+  events: NormalizedEvent[],
+  platform: PlatformName
+): Promise<NormalizedEvent[]> {
+  if (events.length === 0) return [];
+
+  const keys = events.map((e) => key(e.platformEventId, platform));
+  const fresh = new Set<number>();
+
+  for (let i = 0; i < keys.length; i += CHUNK_SIZE) {
+    const chunk = keys.slice(i, i + CHUNK_SIZE);
+    const results = await redis.mget<ScrapedPrice>(...chunk);
+    for (let j = 0; j < results.length; j++) {
+      if (results[j]) fresh.add(i + j);
+    }
+  }
+
+  return events.filter((_, idx) => !fresh.has(idx));
 }

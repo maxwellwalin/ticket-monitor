@@ -10,6 +10,14 @@ export const presaleOpeningRule: AlertRule = {
   type: "presale_opening",
   label: "Presale",
   color: "#9333ea",
+  priority: 60,
+  dedupNamespace: "presale",
+  suppresses: [],
+
+  dedupDiscriminator(_event, match, _ctx) {
+    const name = match.meta?.presaleName ?? "unknown";
+    return name.toLowerCase().replace(/\s+/g, "-");
+  },
 
   async evaluate(
     event: NormalizedEvent,
@@ -38,12 +46,6 @@ export const presaleOpeningRule: AlertRule = {
     }
 
     return matches;
-  },
-
-  dedupKey(event: NormalizedEvent, match: RuleMatch, _ctx: AlertCheckContext): string {
-    const name = match.meta?.presaleName ?? "unknown";
-    const slug = name.toLowerCase().replace(/\s+/g, "-");
-    return `presale:${event.platformEventId}:${slug}`;
   },
 
   renderDetail(alert): string {

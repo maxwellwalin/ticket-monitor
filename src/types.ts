@@ -4,6 +4,8 @@ export type PlatformName =
   | "stubhub"
   | "vividseats";
 
+export const PLATFORMS = ["ticketmaster", "seatgeek", "stubhub", "vividseats"] as const satisfies readonly PlatformName[];
+
 export interface PlatformPrice {
   platform: PlatformName;
   min: number;
@@ -44,7 +46,7 @@ export interface NormalizedEvent {
   };
   publicSaleStart?: string; // ISO 8601
   presales?: Presale[];
-  platformPrices?: PlatformPrice[];
+  platformPrices: PlatformPrice[];
 }
 
 export type AlertType =
@@ -59,5 +61,5 @@ export interface AlertPayload {
   watchName: string;
   maxPrice: number;
   detail?: string; // e.g. "Citi Presale — opens in 2h" or "Price dropped $150 → $89"
-  dedupKey: string; // full Redis key for mark-before-send
+  dedupKey: string; // full Redis key for send-before-mark
 }

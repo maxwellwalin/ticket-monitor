@@ -1,4 +1,4 @@
-import { monitor } from "../src/monitor";
+import { createMonitor } from "../src/monitor";
 import { createRedis } from "../src/state/redis";
 import { ApiBudgetStore } from "../src/state/api-budget";
 import { RedisAlertState } from "../src/alerts/adapters/redis-state";
@@ -40,7 +40,8 @@ export async function GET(request: Request): Promise<Response> {
     }
     const sender = createResendSender();
 
-    const result = await monitor({ alertState, apiBudget, platforms, sender, priceStore });
+    const mon = createMonitor({ alertState, apiBudget, platforms, sender, priceStore });
+    const result = await mon.run();
     console.log("Monitor result:", JSON.stringify(result));
     return Response.json({ ok: true, ...result });
   } catch (err) {

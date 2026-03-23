@@ -229,6 +229,7 @@ export class TicketmasterClient implements PlatformAdapter {
         : undefined,
       publicSaleStart: raw.sales?.public?.startDateTime,
       presales: this.parsePresales(raw.sales?.presales),
+      platformPrices: [],
     };
   }
 

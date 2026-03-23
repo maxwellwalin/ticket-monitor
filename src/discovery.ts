@@ -21,56 +21,45 @@ export interface WatchHit {
   events: NormalizedEvent[];
 }
 
-export interface DiscoveryResult {
-  /** All events, deduplicated across platforms */
-  events: NormalizedEvent[];
-  /** Per-watch results with context for alert detection */
-  watchHits: WatchHit[];
-  /** Total API calls made during discovery */
-  apiCallsUsed: number;
-  /** Non-fatal errors encountered */
-  errors: string[];
-}
+// ---------------------------------------------------------------------------
+// Internal: shared discovery logic
+// ---------------------------------------------------------------------------
 
-export interface DiscoveryDeps {
+async function discoverRaw(deps: {
   platforms: PlatformAdapter[];
-  /** If provided, check/enforce daily API limit. Omit for unlimited. */
-  apiBudget?: ApiBudgetStore;
-  /** Override config loading (for testing). Defaults to loadWatchlist(). */
-  config?: WatchlistConfig;
-}
-
-export async function discoverEvents(
-  deps: DiscoveryDeps
-): Promise<DiscoveryResult> {
-  const { platforms, apiBudget } = deps;
-  const config = deps.config ?? loadWatchlist();
-  const result: DiscoveryResult = {
-    events: [],
-    watchHits: [],
+  config: WatchlistConfig;
+  budgetGuard?: { usedToday: number; limit: number };
+}): Promise<{
+  watchHits: WatchHit[];
+  allEvents: NormalizedEvent[];
+  apiCallsUsed: number;
+  errors: string[];
+}> {
+  const { platforms, config, budgetGuard } = deps;
+  const result = {
+    watchHits: [] as WatchHit[],
+    allEvents: [] as NormalizedEvent[],
     apiCallsUsed: 0,
-    errors: [],
+    errors: [] as string[],
   };
 
-  let usedToday = 0;
-  if (apiBudget) {
-    usedToday = await apiBudget.getUsedToday();
-    if (usedToday >= DAILY_API_LIMIT) {
-      result.errors.push(
-        `Daily API limit reached (${usedToday}/${DAILY_API_LIMIT})`
-      );
-      return result;
-    }
+  if (budgetGuard && budgetGuard.usedToday >= budgetGuard.limit) {
+    result.errors.push(
+      `Daily API limit reached (${budgetGuard.usedToday}/${budgetGuard.limit})`
+    );
+    return result;
   }
 
   // Resolve geo once, pass to all adapter calls
   const geo = resolveGeo(config.settings.geo_filter);
 
-  const allEvents: NormalizedEvent[] = [];
   let apiCalls = 0;
 
+  // Conservative: stop when we've reached or exceeded the limit
   const budgetExhausted = () =>
-    apiBudget ? usedToday + apiCalls >= DAILY_API_LIMIT : false;
+    budgetGuard
+      ? budgetGuard.usedToday + apiCalls >= budgetGuard.limit
+      : false;
 
   for (const platform of platforms) {
     // Process artist watches
@@ -89,7 +78,7 @@ export async function discoverEvents(
             maxPrice,
             events,
           });
-          allEvents.push(...events);
+          result.allEvents.push(...events);
         }
       } catch (err) {
         result.errors.push(`[${platform.name}] Artist "${artist.name}": ${err}`);
@@ -139,7 +128,7 @@ export async function discoverEvents(
             maxPrice,
             events,
           });
-          allEvents.push(...events);
+          result.allEvents.push(...events);
         }
       } catch (err) {
         result.errors.push(`[${platform.name}] Event "${eventWatch.name}": ${err}`);
@@ -147,10 +136,69 @@ export async function discoverEvents(
     }
   }
 
-  result.events = deduplicateEvents(allEvents);
   result.apiCallsUsed = apiCalls;
   return result;
 }
+
+// ---------------------------------------------------------------------------
+// Public: monitor-facing (watchHits, budget read+write)
+// ---------------------------------------------------------------------------
+
+export async function discoverForMonitor(deps: {
+  platforms: PlatformAdapter[];
+  apiBudget?: ApiBudgetStore;
+  config?: WatchlistConfig;
+}): Promise<{
+  watchHits: WatchHit[];
+  apiCallsUsed: number;
+  errors: string[];
+}> {
+  const config = deps.config ?? loadWatchlist();
+
+  let budgetGuard: { usedToday: number; limit: number } | undefined;
+  if (deps.apiBudget) {
+    const usedToday = await deps.apiBudget.getUsedToday();
+    budgetGuard = { usedToday, limit: DAILY_API_LIMIT };
+  }
+
+  const raw = await discoverRaw({ platforms: deps.platforms, config, budgetGuard });
+
+  if (deps.apiBudget && raw.apiCallsUsed > 0) {
+    await deps.apiBudget.increment(raw.apiCallsUsed);
+  }
+
+  return {
+    watchHits: raw.watchHits,
+    apiCallsUsed: raw.apiCallsUsed,
+    errors: raw.errors,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Public: scraper-facing (deduplicated events, no budget)
+// ---------------------------------------------------------------------------
+
+export async function discoverForScraper(deps: {
+  platforms: PlatformAdapter[];
+  config?: WatchlistConfig;
+}): Promise<{
+  events: NormalizedEvent[];
+  apiCallsUsed: number;
+  errors: string[];
+}> {
+  const config = deps.config ?? loadWatchlist();
+  const raw = await discoverRaw({ platforms: deps.platforms, config });
+
+  return {
+    events: deduplicateEvents(raw.allEvents),
+    apiCallsUsed: raw.apiCallsUsed,
+    errors: raw.errors,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Utility
+// ---------------------------------------------------------------------------
 
 /** Deduplicate events across platforms by artist+venue+date. Keeps first occurrence; prefers API-priced. */
 export function deduplicateEvents(

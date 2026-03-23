@@ -8,7 +8,9 @@ export const priceBelowRule: AlertRule = {
   type: "price_below",
   label: "Price Match",
   color: "#16a34a",
-  skipTypes: ["price_drop"],
+  priority: 80,
+  dedupNamespace: "alert",
+  suppresses: ["price_drop"],
 
   async evaluate(
     event: NormalizedEvent,
@@ -25,7 +27,7 @@ export const priceBelowRule: AlertRule = {
     ) {
       const pp = event.platformPrices;
       const priceText =
-        pp && pp.length > 0
+        pp.length > 0
           ? `Best: $${pp[0].min} on ${platformLabel(pp[0].platform)}`
           : `$${event.priceRange.min} - $${event.priceRange.max} ${event.priceRange.currency}`;
       return [{ detail: priceText }];
@@ -33,15 +35,11 @@ export const priceBelowRule: AlertRule = {
     return [];
   },
 
-  dedupKey(event: NormalizedEvent, _match: RuleMatch, ctx: AlertCheckContext): string {
-    return `alert:${event.platformEventId}:${ctx.maxPrice}`;
-  },
-
   renderDetail(alert): string {
     const { event, maxPrice, detail } = alert;
     const pp = event.platformPrices;
     const priceText =
-      pp && pp.length > 0
+      pp.length > 0
         ? `Best: $${pp[0].min} on ${platformLabel(pp[0].platform)}`
         : detail || (event.priceRange
           ? `$${event.priceRange.min} - $${event.priceRange.max} ${event.priceRange.currency}`

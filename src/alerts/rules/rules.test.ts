@@ -3,8 +3,9 @@ import { priceBelowRule } from "./price-below";
 import { priceDropRule } from "./price-drop";
 import { presaleOpeningRule } from "./presale-opening";
 import { ticketsAvailableRule } from "./tickets-available";
-import type { NormalizedEvent } from "../../types";
-import type { AlertStatePort, AlertCheckContext, Clock } from "../ports";
+import type { NormalizedEvent, AlertPayload } from "../../types";
+import type { AlertStatePort, AlertSender, AlertCheckContext, Clock } from "../ports";
+import { AlertEngine } from "../engine";
 
 function makeEvent(overrides: Partial<NormalizedEvent> = {}): NormalizedEvent {
   return {
@@ -17,6 +18,7 @@ function makeEvent(overrides: Partial<NormalizedEvent> = {}): NormalizedEvent {
     date: "2026-06-15T20:00:00Z",
     status: "onsale",
     url: "https://example.com/event",
+    platformPrices: [],
     ...overrides,
   };
 }
@@ -93,8 +95,8 @@ describe("priceBelowRule", () => {
     expect(matches[0].detail).toContain("StubHub");
   });
 
-  test("skipTypes includes price_drop", () => {
-    expect(priceBelowRule.skipTypes).toContain("price_drop");
+  test("suppresses includes price_drop", () => {
+    expect(priceBelowRule.suppresses).toContain("price_drop");
   });
 });
 
@@ -258,11 +260,11 @@ describe("presaleOpeningRule", () => {
     expect(matches[0].detail).toContain("Soon");
   });
 
-  test("dedupKey includes presale name slug", () => {
+  test("dedupDiscriminator returns presale name slug", () => {
     const event = makeEvent();
     const match = { detail: "test", meta: { presaleName: "Citi Presale" } };
-    expect(presaleOpeningRule.dedupKey(event, match, ctx)).toBe(
-      "presale:ev1:citi-presale"
+    expect(presaleOpeningRule.dedupDiscriminator!(event, match, ctx)).toBe(
+      "citi-presale"
     );
   });
 });
@@ -299,8 +301,125 @@ describe("ticketsAvailableRule", () => {
     expect(matches).toHaveLength(0);
   });
 
-  test("skipTypes includes price_below and price_drop", () => {
-    expect(ticketsAvailableRule.skipTypes).toContain("price_below");
-    expect(ticketsAvailableRule.skipTypes).toContain("price_drop");
+  test("suppresses includes price_below and price_drop", () => {
+    expect(ticketsAvailableRule.suppresses).toContain("price_below");
+    expect(ticketsAvailableRule.suppresses).toContain("price_drop");
+  });
+});
+
+// ── AlertEngine ──────────────────────────────────────────
+
+const nullSender: AlertSender = { send: async () => {} };
+
+describe("AlertEngine", () => {
+  test("priority-based evaluation order: tickets_available suppresses price_below/price_drop", async () => {
+    // Pass rules in WRONG order (low priority first)
+    const engine = new AlertEngine(nullState, nullSender, [priceDropRule, priceBelowRule, ticketsAvailableRule, presaleOpeningRule], fixedClock);
+    const event = makeEvent({
+      priceRange: { min: 80, max: 150, currency: "USD", source: "scraped" },
+    });
+    const alerts = await engine.detect([event], ctx);
+    // Only tickets_available should fire; price_below and price_drop suppressed
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0].type).toBe("tickets_available");
+  });
+
+  test("centralized dedup key: price_below uses alert namespace", async () => {
+    const engine = new AlertEngine(nullState, nullSender, [priceBelowRule], fixedClock);
+    const event = makeEvent({
+      priceRange: { min: 80, max: 150, currency: "USD", source: "discovery-api" },
+    });
+    const alerts = await engine.detect([event], ctx);
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0].dedupKey).toBe("alert:ev1:100");
+  });
+
+  test("centralized dedup key: presale_opening uses presale namespace + slug", async () => {
+    const engine = new AlertEngine(nullState, nullSender, [presaleOpeningRule], fixedClock);
+    const event = makeEvent({
+      presales: [
+        {
+          name: "Citi Presale",
+          startDateTime: "2026-06-15T20:00:00Z",
+          endDateTime: "2026-06-16T20:00:00Z",
+        },
+      ],
+    });
+    const alerts = await engine.detect([event], ctx);
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0].dedupKey).toBe("presale:ev1:citi-presale");
+  });
+
+  test("send-before-mark: email failure prevents markAlerted", async () => {
+    const markCalls: string[] = [];
+    const trackingState: AlertStatePort = {
+      ...nullState,
+      markAlerted: async (key) => { markCalls.push(key); },
+    };
+    const failingSender: AlertSender = {
+      send: async () => { throw new Error("SMTP down"); },
+    };
+    const engine = new AlertEngine(trackingState, failingSender, [], fixedClock);
+    const alerts: AlertPayload[] = [
+      {
+        type: "price_below",
+        event: makeEvent(),
+        watchName: "Test",
+        maxPrice: 100,
+        dedupKey: "alert:ev1:100",
+      },
+    ];
+    const result = await engine.flush(alerts, "test@example.com", 3600);
+    expect(markCalls).toHaveLength(0);
+    expect(result.sent).toBe(0);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0]).toContain("Email send failed");
+  });
+
+  test("send-before-mark: email success marks all alerts", async () => {
+    const markCalls: string[] = [];
+    const trackingState: AlertStatePort = {
+      ...nullState,
+      markAlerted: async (key) => { markCalls.push(key); },
+    };
+    const engine = new AlertEngine(trackingState, nullSender, [], fixedClock);
+    const alerts: AlertPayload[] = [
+      {
+        type: "price_below",
+        event: makeEvent(),
+        watchName: "Test",
+        maxPrice: 100,
+        dedupKey: "alert:ev1:100",
+      },
+      {
+        type: "presale_opening",
+        event: makeEvent(),
+        watchName: "Test",
+        maxPrice: 100,
+        dedupKey: "presale:ev1:citi",
+      },
+    ];
+    const result = await engine.flush(alerts, "test@example.com", 3600);
+    expect(result.sent).toBe(2);
+    expect(result.markedInState).toBe(2);
+    expect(markCalls).toEqual(["alert:ev1:100", "presale:ev1:citi"]);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  test("price update dedup: storePrice called once per unique eventId across detect() calls", async () => {
+    const storeCalls: string[] = [];
+    const trackingState: AlertStatePort = {
+      ...nullState,
+      storePrice: async (eventId) => { storeCalls.push(eventId); },
+    };
+    const engine = new AlertEngine(trackingState, nullSender, [priceBelowRule], fixedClock);
+    const event = makeEvent({
+      priceRange: { min: 80, max: 150, currency: "USD", source: "discovery-api" },
+    });
+
+    await engine.detect([event], ctx);
+    await engine.detect([event], ctx);
+
+    expect(storeCalls).toEqual(["ev1"]);
   });
 });

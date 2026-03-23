@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import { createPriceStore, KNOWN_PLATFORMS } from "./index";
+import { createPriceStore, filterStale } from "./index";
 import type { NormalizedEvent } from "../types";
 
 function makeEvent(overrides: Partial<NormalizedEvent> = {}): NormalizedEvent {
@@ -13,6 +13,7 @@ function makeEvent(overrides: Partial<NormalizedEvent> = {}): NormalizedEvent {
     date: "2026-06-15T20:00:00Z",
     status: "onsale",
     url: "https://ticketmaster.com/event/ev1",
+    platformPrices: [],
     ...overrides,
   };
 }
@@ -27,17 +28,17 @@ function fakeRedis(priceMap: Record<string, any> = {}) {
   } as any;
 }
 
-describe("enrichAll", () => {
+describe("enrich", () => {
   test("empty events → empty", async () => {
     const store = createPriceStore(fakeRedis());
-    expect(await store.enrichAll([])).toEqual([]);
+    expect(await store.enrich([])).toEqual([]);
   });
 
   test("no scraped prices → event unchanged", async () => {
     const store = createPriceStore(fakeRedis());
     const events = [makeEvent()];
-    const result = await store.enrichAll(events);
-    expect(result[0].platformPrices).toBeUndefined();
+    const result = await store.enrich(events);
+    expect(result[0].platformPrices).toEqual([]);
     expect(result[0].priceRange).toBeUndefined();
   });
 
@@ -56,12 +57,12 @@ describe("enrichAll", () => {
         },
       })
     );
-    const result = await store.enrichAll([event]);
+    const result = await store.enrich([event]);
     expect(result[0].platformPrices).toHaveLength(2);
     // Sorted by min ascending — StubHub $80 first, TM $100 second
-    expect(result[0].platformPrices![0].platform).toBe("stubhub");
-    expect(result[0].platformPrices![0].min).toBe(80);
-    expect(result[0].platformPrices![1].platform).toBe("ticketmaster");
+    expect(result[0].platformPrices[0].platform).toBe("stubhub");
+    expect(result[0].platformPrices[0].min).toBe(80);
+    expect(result[0].platformPrices[1].platform).toBe("ticketmaster");
   });
 
   test("skips same-platform scraped price when API price exists", async () => {
@@ -78,10 +79,10 @@ describe("enrichAll", () => {
         },
       })
     );
-    const result = await store.enrichAll([event]);
+    const result = await store.enrich([event]);
     // Only the API price, scraped TM price is skipped
     expect(result[0].platformPrices).toHaveLength(1);
-    expect(result[0].platformPrices![0].source).toBe("discovery-api");
+    expect(result[0].platformPrices[0].source).toBe("discovery-api");
   });
 
   test("includes same-platform scraped price when API price is MISSING", async () => {
@@ -96,10 +97,10 @@ describe("enrichAll", () => {
         },
       })
     );
-    const result = await store.enrichAll([event]);
+    const result = await store.enrich([event]);
     expect(result[0].platformPrices).toHaveLength(1);
-    expect(result[0].platformPrices![0].platform).toBe("ticketmaster");
-    expect(result[0].platformPrices![0].min).toBe(75);
+    expect(result[0].platformPrices[0].platform).toBe("ticketmaster");
+    expect(result[0].platformPrices[0].min).toBe(75);
     // priceRange should be set from best scraped price
     expect(result[0].priceRange).toBeDefined();
     expect(result[0].priceRange!.min).toBe(75);
@@ -126,11 +127,11 @@ describe("enrichAll", () => {
         },
       })
     );
-    const result = await store.enrichAll([event]);
+    const result = await store.enrich([event]);
     expect(result[0].priceRange!.min).toBe(90); // best = Vivid Seats
     expect(result[0].priceRange!.source).toBe("scraped");
     expect(result[0].platformPrices).toHaveLength(2);
-    expect(result[0].platformPrices![0].platform).toBe("vividseats"); // sorted cheapest first
+    expect(result[0].platformPrices[0].platform).toBe("vividseats"); // sorted cheapest first
   });
 
   test("SeatGeek event uses seatgeek source label", async () => {
@@ -139,8 +140,8 @@ describe("enrichAll", () => {
       priceRange: { min: 50, max: 100, currency: "USD" },
     });
     const store = createPriceStore(fakeRedis());
-    const result = await store.enrichAll([event]);
-    expect(result[0].platformPrices![0].source).toBe("seatgeek");
+    const result = await store.enrich([event]);
+    expect(result[0].platformPrices[0].source).toBe("seatgeek");
   });
 
   test("URL fallback to search URL when scraped price has no url", async () => {
@@ -156,8 +157,59 @@ describe("enrichAll", () => {
         },
       })
     );
-    const result = await store.enrichAll([event]);
-    expect(result[0].platformPrices![0].url).toContain("stubhub.com/search");
-    expect(result[0].platformPrices![0].url).toContain("Cool%20Show");
+    const result = await store.enrich([event]);
+    expect(result[0].platformPrices[0].url).toContain("stubhub.com/search");
+    expect(result[0].platformPrices[0].url).toContain("Cool%20Show");
+  });
+});
+
+describe("filterStale", () => {
+  test("empty events → empty result", async () => {
+    const result = await filterStale(fakeRedis(), [], "ticketmaster");
+    expect(result).toEqual([]);
+  });
+
+  test("returns events without cached prices", async () => {
+    const ev1 = makeEvent({ platformEventId: "ev1" });
+    const ev2 = makeEvent({ platformEventId: "ev2" });
+    const redis = fakeRedis({
+      "scraped-price:v1:stubhub:ev1": {
+        min: 80,
+        max: 150,
+        currency: "USD",
+        scrapedAt: "2026-01-01T00:00:00Z",
+      },
+    });
+    const result = await filterStale(redis, [ev1, ev2], "stubhub");
+    expect(result).toHaveLength(1);
+    expect(result[0].platformEventId).toBe("ev2");
+  });
+
+  test("returns all events when none cached", async () => {
+    const ev1 = makeEvent({ platformEventId: "ev1" });
+    const ev2 = makeEvent({ platformEventId: "ev2" });
+    const result = await filterStale(fakeRedis(), [ev1, ev2], "stubhub");
+    expect(result).toHaveLength(2);
+  });
+
+  test("returns empty when all cached", async () => {
+    const ev1 = makeEvent({ platformEventId: "ev1" });
+    const ev2 = makeEvent({ platformEventId: "ev2" });
+    const redis = fakeRedis({
+      "scraped-price:v1:stubhub:ev1": {
+        min: 80,
+        max: 150,
+        currency: "USD",
+        scrapedAt: "2026-01-01T00:00:00Z",
+      },
+      "scraped-price:v1:stubhub:ev2": {
+        min: 90,
+        max: 160,
+        currency: "USD",
+        scrapedAt: "2026-01-01T00:00:00Z",
+      },
+    });
+    const result = await filterStale(redis, [ev1, ev2], "stubhub");
+    expect(result).toHaveLength(0);
   });
 });

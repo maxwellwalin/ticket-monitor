@@ -12,19 +12,20 @@ export interface AlertRule {
   readonly type: string;
   readonly label: string;
   readonly color: string;
+  readonly priority: number;
+  readonly dedupNamespace: string;
+  readonly suppresses?: string[];
+  dedupDiscriminator?(event: NormalizedEvent, match: RuleMatch, ctx: AlertCheckContext): string;
   evaluate(
     event: NormalizedEvent,
     ctx: AlertCheckContext,
     state: AlertStatePort,
     clock: Clock
   ): Promise<RuleMatch[]>;
-  dedupKey(event: NormalizedEvent, match: RuleMatch, ctx: AlertCheckContext): string;
   renderDetail(alert: {
     event: NormalizedEvent;
     maxPrice: number;
     detail?: string;
   }): string;
   subjectFragment(count: number): string;
-  /** Alert types to skip if this rule fires for the same event */
-  skipTypes?: string[];
 }

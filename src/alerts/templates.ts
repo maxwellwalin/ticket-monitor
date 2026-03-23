@@ -30,8 +30,8 @@ function alertRow(alert: AlertPayload): string {
   const { event, watchName } = alert;
   const rule = rulesByType.get(alert.type);
   const pp = event.platformPrices;
-  const buyUrl = pp && pp.length > 0 ? pp[0].url : event.url;
-  const alsoOnHtml = pp ? platformPriceLinks(pp) : "";
+  const buyUrl = pp.length > 0 ? pp[0].url : event.url;
+  const alsoOnHtml = platformPriceLinks(pp);
 
   return `
     <tr>

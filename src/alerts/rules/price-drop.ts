@@ -7,6 +7,9 @@ export const priceDropRule: AlertRule = {
   type: "price_drop",
   label: "Price Drop",
   color: "#ea580c",
+  priority: 40,
+  dedupNamespace: "alert",
+  suppresses: [],
 
   async evaluate(
     event: NormalizedEvent,
@@ -27,10 +30,6 @@ export const priceDropRule: AlertRule = {
       ];
     }
     return [];
-  },
-
-  dedupKey(event: NormalizedEvent, _match: RuleMatch, ctx: AlertCheckContext): string {
-    return `alert:${event.platformEventId}:${ctx.maxPrice}`;
   },
 
   renderDetail(alert): string {

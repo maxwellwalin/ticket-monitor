@@ -171,6 +171,7 @@ export class SeatGeekClient implements PlatformAdapter {
       status: this.parseStatus(raw),
       url: raw.url,
       priceRange,
+      platformPrices: [],
     };
   }
 

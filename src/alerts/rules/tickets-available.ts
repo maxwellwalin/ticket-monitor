@@ -8,7 +8,9 @@ export const ticketsAvailableRule: AlertRule = {
   type: "tickets_available",
   label: "Tickets Found",
   color: "#0891b2",
-  skipTypes: ["price_below", "price_drop"],
+  priority: 100,
+  dedupNamespace: "alert",
+  suppresses: ["price_below", "price_drop"],
 
   async evaluate(
     event: NormalizedEvent,
@@ -29,15 +31,11 @@ export const ticketsAvailableRule: AlertRule = {
     return [];
   },
 
-  dedupKey(event: NormalizedEvent, _match: RuleMatch, ctx: AlertCheckContext): string {
-    return `alert:${event.platformEventId}:${ctx.maxPrice}`;
-  },
-
   renderDetail(alert): string {
     const { event, detail } = alert;
     const pp = event.platformPrices;
     const ticketText =
-      pp && pp.length > 0
+      pp.length > 0
         ? `Best: $${pp[0].min} on ${platformLabel(pp[0].platform)}`
         : detail || "Tickets available";
     return `
