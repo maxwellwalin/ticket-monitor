@@ -10,13 +10,11 @@
 
 import { TicketmasterClient } from "../src/platforms/index";
 import { SeatGeekClient } from "../src/platforms/seatgeek/index";
-import { createPriceStore } from "../src/prices";
+import { createPriceStore, filterStale } from "../src/prices";
 import { createRedis } from "../src/state/redis";
-import { ApiBudgetStore } from "../src/state/api-budget";
-import { discoverEvents } from "../src/discovery";
+import { discoverForScraper } from "../src/discovery";
 import { createRateLimiter } from "../src/platforms/rate-limiter";
 import type { PlatformAdapter } from "../src/platforms/types";
-import { closeBrowser } from "./scrapers/shared";
 import { scrapeTicketmaster } from "./scrapers/ticketmaster";
 import { scrapeStubHub } from "./scrapers/stubhub";
 import { scrapeVividSeats } from "./scrapers/vividseats";
@@ -28,8 +26,6 @@ async function main() {
 
   const redis = createRedis();
   const priceCache = createPriceStore(redis);
-  const apiBudget = new ApiBudgetStore(redis);
-
   // 1. Discover events from APIs
   console.log("Fetching events from APIs...");
 
@@ -51,8 +47,7 @@ async function main() {
     );
   }
 
-  const discovery = await discoverEvents({ platforms, apiBudget });
-  await apiBudget.increment(discovery.apiCallsUsed);
+  const discovery = await discoverForScraper({ platforms });
 
   if (discovery.errors.length > 0) {
     for (const err of discovery.errors) console.error(`  Error: ${err}`);
@@ -76,72 +71,66 @@ async function main() {
   }
 
   // 2. Check for fresh cached prices
-  const allIds = eventsToScrape.map((e) => e.platformEventId);
-  const [freshTm, freshSh, freshVs] = await Promise.all([
-    priceCache.hasFreshPrices(allIds, "ticketmaster"),
-    priceCache.hasFreshPrices(allIds, "stubhub"),
-    priceCache.hasFreshPrices(allIds, "vividseats"),
+  const [staleTm, staleSh, staleVs] = await Promise.all([
+    filterStale(redis, eventsToScrape, "ticketmaster"),
+    filterStale(redis, eventsToScrape, "stubhub"),
+    filterStale(redis, eventsToScrape, "vividseats"),
   ]);
 
   const results = {
-    tm: { scraped: 0, failed: 0 },
+    tm: { scraped: 0, failed: 0, soldOut: 0 },
     stubhub: { scraped: 0, failed: 0 },
     vivid: { scraped: 0, failed: 0 },
   };
 
-  try {
-    // 3. TM: scrape events missing API prices (and no fresh cache)
-    const needsTm = eventsToScrape.filter(
-      (e) =>
-        e.platform === "ticketmaster" &&
-        !e.priceRange &&
-        e.url &&
-        !freshTm.has(e.platformEventId)
-    );
-    if (needsTm.length > 0) {
-      console.log(
-        `\n--- Ticketmaster (${needsTm.length} events, ${eventsToScrape.filter((e) => e.platform === "ticketmaster" && !e.priceRange && e.url).length - needsTm.length} cached) ---`
-      );
-      results.tm = await scrapeTicketmaster(needsTm, priceCache);
-    }
+  // 3. Build scrape tasks (each gets its own browser, runs in parallel)
+  const needsTm = staleTm.filter(
+    (e) => e.platform === "ticketmaster" && !e.priceRange && e.url
+  );
+  const needsSh = staleSh;
+  const needsVs = staleVs;
 
-    // 4. StubHub: all events without fresh cache
-    const needsSh = eventsToScrape.filter(
-      (e) => !freshSh.has(e.platformEventId)
-    );
-    if (needsSh.length > 0) {
-      console.log(
-        `\n--- StubHub (${needsSh.length} events, ${eventsToScrape.length - needsSh.length} cached) ---`
-      );
-      results.stubhub = await scrapeStubHub(needsSh, priceCache);
-    } else {
-      console.log(
-        `\n--- StubHub: all ${eventsToScrape.length} cached, skipping ---`
-      );
-    }
+  const totalTmEligible = eventsToScrape.filter(
+    (e) => e.platform === "ticketmaster" && !e.priceRange && e.url
+  ).length;
 
-    // 5. Vivid Seats: all events without fresh cache
-    const needsVs = eventsToScrape.filter(
-      (e) => !freshVs.has(e.platformEventId)
+  console.log(
+    `\n--- Launching parallel scrapers ---`
+  );
+  console.log(
+    `  TM: ${needsTm.length} events (${totalTmEligible - needsTm.length} cached)`
+  );
+  console.log(
+    `  StubHub: ${needsSh.length} events (${eventsToScrape.length - needsSh.length} cached)`
+  );
+  console.log(
+    `  Vivid Seats: ${needsVs.length} events (${eventsToScrape.length - needsVs.length} cached)`
+  );
+
+  const tasks: Promise<void>[] = [];
+
+  if (needsTm.length > 0) {
+    tasks.push(
+      scrapeTicketmaster(needsTm, priceCache).then((r) => { results.tm = r; })
     );
-    if (needsVs.length > 0) {
-      console.log(
-        `\n--- Vivid Seats (${needsVs.length} events, ${eventsToScrape.length - needsVs.length} cached) ---`
-      );
-      results.vivid = await scrapeVividSeats(needsVs, priceCache);
-    } else {
-      console.log(
-        `\n--- Vivid Seats: all ${eventsToScrape.length} cached, skipping ---`
-      );
-    }
-  } finally {
-    await closeBrowser();
   }
+  if (needsSh.length > 0) {
+    tasks.push(
+      scrapeStubHub(needsSh, priceCache).then((r) => { results.stubhub = r; })
+    );
+  }
+  if (needsVs.length > 0) {
+    tasks.push(
+      scrapeVividSeats(needsVs, priceCache).then((r) => { results.vivid = r; })
+    );
+  }
+
+  await Promise.allSettled(tasks);
 
   const elapsed = ((Date.now() - start) / 1000).toFixed(1);
   console.log(`\n=== Summary (${elapsed}s) ===`);
   console.log(
-    `  TM: ${results.tm.scraped} scraped, ${results.tm.failed} failed`
+    `  TM: ${results.tm.scraped} scraped, ${results.tm.soldOut} sold out, ${results.tm.failed} failed`
   );
   console.log(
     `  StubHub: ${results.stubhub.scraped} scraped, ${results.stubhub.failed} failed`

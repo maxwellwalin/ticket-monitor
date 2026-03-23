@@ -2,29 +2,31 @@
  * Ticketmaster scraper — visits event pages directly (URLs from Discovery API),
  * extracts prices from JSON-LD or body text.
  *
- * Runs WITHOUT proxy — TM works fine with direct connections.
+ * Uses stealth plugin. Waits for dynamic ticket list to render.
  * Only scrapes events that have no API price (priceRange undefined).
  */
 
 import type { NormalizedEvent } from "../../src/types";
 import type { PriceStore } from "../../src/prices";
 import {
+  launchStealthBrowser,
   createContext,
-  navigateTo,
   extractJsonLdPrices,
   extractBodyTextPrices,
+  isSoldOut,
 } from "./shared";
 
 export async function scrapeTicketmaster(
   events: NormalizedEvent[],
   cache: PriceStore
-): Promise<{ scraped: number; failed: number }> {
-  // Direct connection — no proxy needed for TM
-  const ctx = await createContext();
+): Promise<{ scraped: number; failed: number; soldOut: number }> {
+  const browser = await launchStealthBrowser();
+  const ctx = await createContext(browser);
   const page = await ctx.newPage();
 
   let scraped = 0;
   let failed = 0;
+  let soldOut = 0;
 
   try {
     for (let i = 0; i < events.length; i++) {
@@ -32,7 +34,26 @@ export async function scrapeTicketmaster(
       console.log(`  [TM ${i + 1}/${events.length}] ${event.name}`);
 
       try {
-        await navigateTo(page, event.url);
+        await page.goto(event.url, {
+          waitUntil: "domcontentloaded",
+          timeout: 30000,
+        });
+
+        // Wait for ticket list to render (TM loads prices dynamically)
+        try {
+          await page.waitForFunction(
+            () => /\$\d+/.test(document.body?.innerText ?? ""),
+            { timeout: 8000 }
+          );
+        } catch {
+          // No prices rendered — might be sold out or not on sale
+        }
+
+        if (await isSoldOut(page)) {
+          console.log(`    Sold out`);
+          soldOut++;
+          continue;
+        }
 
         // Extract prices — JSON-LD primary, body text fallback
         const jsonLdPrices = await extractJsonLdPrices(page);
@@ -56,7 +77,9 @@ export async function scrapeTicketmaster(
             platform: "ticketmaster",
             url: event.url,
           });
-          console.log(`    $${bodyPrices.min} - $${bodyPrices.max} (body text)`);
+          console.log(
+            `    $${bodyPrices.min} - $${bodyPrices.max} (body text)`
+          );
           scraped++;
         } else {
           console.log(`    No price found`);
@@ -68,8 +91,8 @@ export async function scrapeTicketmaster(
       }
     }
   } finally {
-    await ctx.close();
+    await browser.close();
   }
 
-  return { scraped, failed };
+  return { scraped, failed, soldOut };
 }

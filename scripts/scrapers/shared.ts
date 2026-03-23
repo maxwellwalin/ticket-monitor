@@ -1,6 +1,6 @@
 /**
- * Shared scraper utilities — browser launch, JSON-LD extraction, bot detection.
- * All scrapers use direct connections (no proxy).
+ * Shared scraper utilities — stealth browser launch, JSON-LD extraction, bot detection.
+ * Each platform gets its own browser instance for parallel scraping.
  */
 
 import type { Page, BrowserContext, Browser } from "playwright";
@@ -20,47 +20,36 @@ function pickRandom<T>(arr: T[]): T {
   return arr[Math.floor(Math.random() * arr.length)];
 }
 
-// ── Browser launcher ──────────────────────────────────────────
+// ── Stealth browser launcher ─────────────────────────────────
 
-let _browser: Browser | null = null;
+let _stealthLoaded = false;
 
-/** Launch a shared headless browser (reused across platforms). */
-export async function getBrowser(): Promise<Browser> {
-  if (_browser?.isConnected()) return _browser;
-  const { chromium } = await import("playwright");
-  _browser = await chromium.launch({
+/** Launch a new stealth browser (one per platform for parallel scraping). */
+export async function launchStealthBrowser(): Promise<Browser> {
+  const { chromium } = await import("playwright-extra");
+  if (!_stealthLoaded) {
+    const StealthPlugin = (await import("puppeteer-extra-plugin-stealth")).default;
+    chromium.use(StealthPlugin());
+    _stealthLoaded = true;
+  }
+  return chromium.launch({
     headless: true,
     args: [
       "--disable-blink-features=AutomationControlled",
       "--no-first-run",
       "--no-default-browser-check",
-      "--disable-extensions",
     ],
   });
-  return _browser;
 }
 
-/** Close the shared browser. */
-export async function closeBrowser(): Promise<void> {
-  await _browser?.close();
-  _browser = null;
-}
-
-/** Create a fresh browser context with anti-detection init scripts. */
-export async function createContext(): Promise<BrowserContext> {
-  const browser = await getBrowser();
-  const context = await browser.newContext({
+/** Create a fresh browser context on a given browser. */
+export async function createContext(browser: Browser): Promise<BrowserContext> {
+  return browser.newContext({
     viewport: pickRandom(VIEWPORTS),
     userAgent: USER_AGENT,
     locale: "en-US",
     timezoneId: "America/Los_Angeles",
   });
-
-  await context.addInitScript(() => {
-    Object.defineProperty(navigator, "webdriver", { get: () => false });
-  });
-
-  return context;
 }
 
 // ── JSON-LD price extraction (primary strategy) ───────────────
@@ -132,12 +121,20 @@ export async function navigateTo(page: Page, url: string): Promise<void> {
   } catch {}
 }
 
-/** Check if the page is showing a CAPTCHA or bot challenge. */
+/** Check if the page is showing a CAPTCHA or bot challenge (not just referencing one in scripts). */
 export async function isBlockedPage(page: Page): Promise<boolean> {
   return page.evaluate(() => {
-    const html = document.documentElement.innerHTML.toLowerCase();
-    return ["captcha", "cf-challenge", "g-recaptcha", "hcaptcha", "access denied", "are you a robot"].some(
-      (s) => html.includes(s)
+    const text = (document.body?.innerText ?? "").toLowerCase();
+    return ["access denied", "are you a robot", "please verify", "checking your browser"].some(
+      (s) => text.includes(s)
     );
+  });
+}
+
+/** Check if a Ticketmaster event page shows sold-out status. */
+export async function isSoldOut(page: Page): Promise<boolean> {
+  return page.evaluate(() => {
+    const text = (document.body?.innerText ?? "").toLowerCase();
+    return text.includes("sold out") || text.includes("no tickets available");
   });
 }

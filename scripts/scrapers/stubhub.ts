@@ -2,12 +2,13 @@
  * StubHub scraper — searches for events, navigates to event detail pages,
  * extracts prices from JSON-LD AggregateOffer.
  *
- * Direct connection — no proxy needed.
+ * Uses stealth plugin. Own browser instance for parallel execution.
  */
 
 import type { NormalizedEvent } from "../../src/types";
 import type { PriceStore } from "../../src/prices";
 import {
+  launchStealthBrowser,
   createContext,
   navigateTo,
   extractJsonLdPrices,
@@ -19,7 +20,8 @@ export async function scrapeStubHub(
   events: NormalizedEvent[],
   cache: PriceStore
 ): Promise<{ scraped: number; failed: number }> {
-  const ctx = await createContext();
+  const browser = await launchStealthBrowser();
+  const ctx = await createContext(browser);
   const page = await ctx.newPage();
 
   let scraped = 0;
@@ -111,7 +113,7 @@ export async function scrapeStubHub(
       }
     }
   } finally {
-    await ctx.close();
+    await browser.close();
   }
 
   return { scraped, failed };
