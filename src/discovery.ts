@@ -1,6 +1,5 @@
 /**
- * Shared event discovery module — used by both `api/cron.ts` (via monitor.ts)
- * and `scripts/scraper.ts` (local Mac).
+ * Shared event discovery module — used by `scripts/run.ts` (via monitor.ts).
  *
  * Collects events from all platform adapters for all watches,
  * deduplicates, and returns structured results.

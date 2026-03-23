@@ -5,5 +5,4 @@ dist/
 .vercel
 logs/
 .DS_Store
-scripts/debug-*
 watchlist.yml

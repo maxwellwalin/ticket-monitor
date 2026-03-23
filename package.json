@@ -3,10 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "bun run api/cron.ts",
+    "start": "bun run scripts/run.ts",
     "test": "bun test",
-    "test:local": "bun run scripts/test-local.ts",
-    "scrape": "bun run scripts/scraper.ts",
+    "test:dry": "bun run scripts/test-monitor.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

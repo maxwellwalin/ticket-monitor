@@ -1,9 +1,0 @@
-{
-  "installCommand": "bun install",
-  "crons": [
-    {
-      "path": "/api/cron",
-      "schedule": "*/30 * * * *"
-    }
-  ]
-}
